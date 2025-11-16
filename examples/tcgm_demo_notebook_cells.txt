@@ -1,0 +1,20 @@
+
+---
+
+### `tcgm/__init__.py`
+```python
+from .tcgm import TimeCostGradientMachine
+from .objectives import financial_loss, grad_financial
+from .metrics import evaluate_financial_performance, compute_expected_monetary_loss
+from .encoders import LeakageSafeTargetEncoder
+from .utils import time_walk_forward_splits
+
+__all__ = [
+    "TimeCostGradientMachine",
+    "financial_loss",
+    "grad_financial",
+    "evaluate_financial_performance",
+    "compute_expected_monetary_loss",
+    "LeakageSafeTargetEncoder",
+    "time_walk_forward_splits",
+]

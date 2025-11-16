@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: tcgm
+Version: 0.1.0
+Summary: TimeCost Gradient Machine — a time-aware, cost-sensitive boosting algorithm for finance.
+Author: Chidiebere V. Christopher
+Requires-Python: >=3.8
+Requires-Dist: numpy>=1.21
+Requires-Dist: pandas>=1.5
+Requires-Dist: scikit-learn>=1.1
+Requires-Dist: joblib>=1.1
+Requires-Dist: matplotlib>=3.5
+Dynamic: author
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
