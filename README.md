@@ -1,6 +1,6 @@
 # 🕒💰 TimeCost Gradient Machine (TCGM)
 
-**TCGM** is a domain-specific gradient learning framework designed for **financial prediction tasks** where  
+**TCGM** is a domain-specific gradient learning algorithm developed by Chidiebere V. Christopher for **financial prediction tasks** where  
 time, cost, risk asymmetry, and regulatory constraints all matter.  
 
 Unlike general-purpose ML algorithms that require bagging, boosting, and stacking to improve performance,  
