@@ -7,6 +7,7 @@ from sklearn.metrics import roc_auc_score, brier_score_loss
 from .loss import financial_loss
 
 def evaluate_financial_performance(y_true, y_pred, cost_fp=1.0, cost_fn=5.0):
+    
     """
     Compute AUC, Brier, and Expected Loss.
     y_pred should be probabilities in [0,1].
@@ -20,6 +21,7 @@ def evaluate_financial_performance(y_true, y_pred, cost_fp=1.0, cost_fn=5.0):
     return {"AUC": auc, "Brier": brier, "Expected_Loss": exp_loss}
 
 def compute_expected_monetary_loss(y_true, y_prob, exposure, lgd=0.6, cost_fp=50.0, thresholds=None):
+    
     """
     Compute expected monetary loss across thresholds and return best threshold & loss.
     This function treats decisions as thresholding probabilities.
@@ -51,4 +53,41 @@ def compute_expected_monetary_loss(y_true, y_prob, exposure, lgd=0.6, cost_fp=50
         "losses": losses,
         "best_threshold": float(thresholds[best_idx]),
         "best_loss": float(losses[best_idx])
+    }
+    
+
+def compute_expected_monetary_loss(y_true, y_prob, exposure, lgd=0.6, cost_fp=50.0):
+    y_true = np.array(y_true).astype(int)
+    y_prob = np.array(y_prob).astype(float)
+    exposure = np.array(exposure).astype(float)
+
+    thresholds = np.linspace(0.01, 0.99, 99)
+
+    best_loss = np.inf
+    best_threshold = None
+    losses = []
+
+    for t in thresholds:
+        y_pred = (y_prob >= t).astype(int)
+
+        # False positives → cost_fp
+        fp_mask = (y_pred == 1) & (y_true == 0)
+        fp_loss = fp_mask.sum() * cost_fp
+
+        # False negatives → exposure * LGD
+        fn_mask = (y_pred == 0) & (y_true == 1)
+        fn_loss = np.sum(fn_mask * exposure * lgd)
+
+        total_loss = fp_loss + fn_loss
+        losses.append(total_loss)
+
+        if total_loss < best_loss:
+            best_loss = total_loss
+            best_threshold = t
+
+    return {
+        "best_threshold": best_threshold,
+        "best_loss": best_loss,
+        "thresholds": thresholds,
+        "loss_curve": losses,
     }
