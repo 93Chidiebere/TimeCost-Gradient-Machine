@@ -1,93 +1,132 @@
 """
-Evaluation metrics and helpers for financial models.
+Financial evaluation metrics for TCGM.
+Provides:
+    - AUC
+    - Brier Score
+    - Expected Financial Loss
+    - Expected Monetary Loss (threshold optimizer)
 """
 
 import numpy as np
 from sklearn.metrics import roc_auc_score, brier_score_loss
 from .loss import financial_loss
 
-def evaluate_financial_performance(y_true, y_pred, cost_fp=1.0, cost_fn=5.0):
-    
-    """
-    Compute AUC, Brier, and Expected Loss.
-    y_pred should be probabilities in [0,1].
-    Returns dict with metrics (numbers).
-    """
-    y_true = np.asarray(y_true)
-    y_pred = np.clip(np.asarray(y_pred), 0.0, 1.0)
-    auc = roc_auc_score(y_true, y_pred) if len(np.unique(y_true)) > 1 else float("nan")
-    brier = brier_score_loss(y_true, y_pred)
-    exp_loss = float(np.mean(financial_loss(y_true, y_pred, cost_fp, cost_fn)))
-    return {"AUC": auc, "Brier": brier, "Expected_Loss": exp_loss}
 
-def compute_expected_monetary_loss(y_true, y_prob, exposure, lgd=0.6, cost_fp=50.0, thresholds=None):
-    
+# -------------------------------------------------------------------------
+# AUC calculation (safe when only one class exists)
+# -------------------------------------------------------------------------
+def _safe_auc(y_true, y_prob):
+    y_true = np.asarray(y_true)
+    y_prob = np.asarray(y_prob)
+
+    # AUC is undefined if only one class exists
+    if len(np.unique(y_true)) < 2:
+        return float("nan")
+
+    return float(roc_auc_score(y_true, y_prob))
+
+
+# -------------------------------------------------------------------------
+# Brier Score
+# -------------------------------------------------------------------------
+def _brier(y_true, y_prob):
+    return float(brier_score_loss(y_true, y_prob))
+
+
+# -------------------------------------------------------------------------
+# Financial Expected Loss (model-implied asymmetric loss)
+# -------------------------------------------------------------------------
+def evaluate_financial_performance(y_true, y_prob, cost_fp=1.0, cost_fn=5.0):
     """
-    Compute expected monetary loss across thresholds and return best threshold & loss.
-    This function treats decisions as thresholding probabilities.
-    y_true: binary labels
+    Computes:
+        - AUC
+        - Brier Score
+        - Expected Loss using the financial asymmetric loss function
+    
+    y_true: array-like of 0/1 labels
     y_prob: predicted probabilities
-    exposure: per-sample exposure (monetary)
-    lgd: loss given default fraction (applies when y=1 and not predicted)
-    cost_fp: monetary cost per false positive (e.g., operational cost)
-    thresholds: iterable of thresholds to evaluate; if None defaults to np.linspace(0,1,101)
     """
-    y_true = np.asarray(y_true)
+    y_true = np.asarray(y_true).astype(int)
     y_prob = np.clip(np.asarray(y_prob), 0.0, 1.0)
-    exposure = np.asarray(exposure)
-    if thresholds is None:
-        thresholds = np.linspace(0.0, 1.0, 101)
-    losses = []
-    for t in thresholds:
-        decisions = (y_prob >= t).astype(int)
-        # false positives: decision=1 but y=0 -> cost_fp each
-        fp_costs = np.where((decisions == 1) & (y_true == 0), cost_fp, 0.0)
-        # missed positives: y=1 and decision=0 -> exposure * lgd
-        miss_costs = np.where((decisions == 0) & (y_true == 1), exposure * lgd, 0.0)
-        total_loss = float(np.sum(fp_costs) + np.sum(miss_costs))
-        losses.append(total_loss)
-    losses = np.asarray(losses)
-    best_idx = int(np.argmin(losses))
+
+    auc = _safe_auc(y_true, y_prob)
+    brier = _brier(y_true, y_prob)
+
+    # Mean asymmetric loss across all samples
+    exp_loss = float(np.mean(financial_loss(y_true, y_prob, cost_fp, cost_fn)))
+
     return {
-        "thresholds": thresholds,
-        "losses": losses,
-        "best_threshold": float(thresholds[best_idx]),
-        "best_loss": float(losses[best_idx])
+        "AUC": auc,
+        "Brier": brier,
+        "Expected_Loss": exp_loss,
     }
-    
 
-def compute_expected_monetary_loss(y_true, y_prob, exposure, lgd=0.6, cost_fp=50.0):
-    y_true = np.array(y_true).astype(int)
-    y_prob = np.array(y_prob).astype(float)
-    exposure = np.array(exposure).astype(float)
 
-    thresholds = np.linspace(0.01, 0.99, 99)
+# -------------------------------------------------------------------------
+# Expected Monetary Loss (threshold sweep for decision optimization)
+# -------------------------------------------------------------------------
+def compute_expected_monetary_loss(
+    y_true,
+    y_prob,
+    exposure,
+    lgd=0.6,
+    cost_fp=50.0,
+    thresholds=None
+):
+    """
+    Computes threshold-dependent monetary loss:
+        FP → operational cost
+        FN → exposure × LGD
+
+    Returns:
+        {
+            "best_threshold": float,
+            "best_loss": float,
+            "thresholds": array,
+            "loss_curve": array
+        }
+
+    y_true: binary ground truth (0/1)
+    y_prob: model predicted probabilities
+    exposure: monetary exposure per transaction
+    lgd: loss given default (fraction of exposure lost)
+    cost_fp: cost of wrongly blocking a legitimate transaction
+    thresholds: optional iterable of thresholds
+    """
+
+    y_true = np.asarray(y_true).astype(int)
+    y_prob = np.clip(np.asarray(y_prob), 0.0, 1.0)
+    exposure = np.asarray(exposure).astype(float)
+
+    if thresholds is None:
+        thresholds = np.linspace(0.01, 0.99, 99)
+
+    loss_values = []
 
     best_loss = np.inf
     best_threshold = None
-    losses = []
 
     for t in thresholds:
-        y_pred = (y_prob >= t).astype(int)
+        decisions = (y_prob >= t).astype(int)
 
-        # False positives → cost_fp
-        fp_mask = (y_pred == 1) & (y_true == 0)
+        # False Positives → blocking legitimate customers
+        fp_mask = (decisions == 1) & (y_true == 0)
         fp_loss = fp_mask.sum() * cost_fp
 
-        # False negatives → exposure * LGD
-        fn_mask = (y_pred == 0) & (y_true == 1)
+        # False Negatives → missed fraud → lose exposure × LGD
+        fn_mask = (decisions == 0) & (y_true == 1)
         fn_loss = np.sum(fn_mask * exposure * lgd)
 
         total_loss = fp_loss + fn_loss
-        losses.append(total_loss)
+        loss_values.append(total_loss)
 
         if total_loss < best_loss:
             best_loss = total_loss
             best_threshold = t
 
     return {
-        "best_threshold": best_threshold,
-        "best_loss": best_loss,
-        "thresholds": thresholds,
-        "loss_curve": losses,
+        "best_threshold": float(best_threshold),
+        "best_loss": float(best_loss),
+        "thresholds": np.array(thresholds),
+        "loss_curve": np.array(loss_values)
     }

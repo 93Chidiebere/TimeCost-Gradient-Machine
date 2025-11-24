@@ -40,7 +40,7 @@ TCGM integrates:
 Install in editable mode during development:
 
 ```bash
-pip install -e .
+pip install tcgm==0.1.1
 ```
 
 Or install in your virtual environment
@@ -50,7 +50,7 @@ python -m venv venv
 source venv/bin/activate     # Mac/Linux
 venv\Scripts\activate        # Windows
 
-pip install -e .
+pip install tcgm==0.1.1
 ```
 ## 📦 Project Structure
 ```ardiuno
@@ -62,7 +62,6 @@ timecost-gradient-machine/
 │   ├── tcgm_model.py
 │   ├── models.py
 │   ├── loss.py
-│   ├── cost.py
 │   ├── metrics.py
 │   ├── encoders.py
 │   └── utils.py
@@ -74,6 +73,8 @@ timecost-gradient-machine/
 │   └── test_tcgm.py
 │
 ├── setup.py
+├── pyproject.toml
+├──setup.cfg
 ├── README.md
 └── requirements.txt
 ```
