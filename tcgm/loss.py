@@ -5,8 +5,6 @@ risk, AML, chargebacks, and operational risk modeling.
 """
 
 import numpy as np
-
-
 # -------------------------------------------------------------------------
 # 1) FINANCIAL LOSS FUNCTION
 # -------------------------------------------------------------------------

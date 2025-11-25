@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="tcgm",
-    version="0.1.0",
+    version="0.1.1",
     description="TimeCost Gradient Machine — a time-aware, cost-sensitive boosting algorithm for finance.",
     author="Chidiebere V. Christopher",
     packages=find_packages(),
