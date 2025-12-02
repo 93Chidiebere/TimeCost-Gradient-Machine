@@ -21,3 +21,5 @@ __all__ = [
     "evaluate_financial_performance",
     "compute_expected_monetary_loss",
 ]
+
+__version__ = "0.1.1"

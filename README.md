@@ -105,20 +105,63 @@ Transaction fraud | Customer lifetime value | Chargeback prediction
 
 ```python
 from tcgm import TimeCostGradientMachine
-from sklearn.tree import DecisionTreeClassifier
+from tcgn.metrics import evaluate_financial_performance, compute_expected_monetary_loss
 
 model = TimeCostGradientMachine(
-    base_model=DecisionTreeClassifier(max_depth=4),
-    time_cost_weight=1.0,
-    regulator_penalty=0.2,
-    economic_sensitivity=1.3,
+    n_estimators=60,
+    learning_rate=0.1,
+    max_depth=4,
+    min_samples_leaf=20,
+    cost_fp=50.0,
+    cost_fn=200.0
 )
 
-model.fit(X_train, y_train, cost=cost_vector, timestamps=ts)
-preds = model.predict_proba(X_test)
+start = time.time()
 
-score = model.financial_score(X_test, y_test, cost=test_cost_vector)
-print("Expected Monetary Gain:", score)
+model.fit(X_train, y_train)
+print(f"Training time: {time.time() - start:.2f} seconds")
+
+# Predict probabilities
+probs = model.predict_proba(X_test)[:, 1]
+probs[:10]
+
+# Evaluate Model
+report = evaluate_financial_performance(
+    y_test,
+    probs,
+    cost_fp=50,
+    cost_fn=200
+)
+report
+
+# Compute Expected Monetary Loss
+exposure = X_test["amount"].values
+
+eml = compute_expected_monetary_loss(
+    y_true = y_test,
+    y_prob = probs,
+    exposure = exposure,
+    lgd = 0.6,
+    cost_fp= 50
+)
+
+eml
+
+# Plot full loss curve
+plt.plot(eml["thresholds"], eml["loss_curve"], label="Loss Curve")
+
+# Mark best threshold
+plt.axvline(eml["best_threshold"], linestyle="--", label="Best Threshold")
+
+plt.title("TCGM Expected Monetary Loss Curve")
+plt.xlabel("Threshold")
+plt.ylabel("Loss (#)")
+plt.grid(True)
+plt.legend()
+plt.show()
+
+# Save the model
+joblib.dump(model, "model.pkl")
 
 ```
 
@@ -136,7 +179,7 @@ stacking → to compensate weaknesses
 
 ## ⭐ Acknowledgment
 
-TCGM is designed for real-world Nigerian banking environments, including:
+TCGM is designed for real-world Nigerian and African banking environments, including:
 
 NIP
 agency banking
