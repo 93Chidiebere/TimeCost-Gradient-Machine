@@ -1,62 +1,58 @@
+# tcgm/loss.py
 """
-Financial loss functions and gradients used by the TimeCostGradientMachine (TCGM).
-The design enforces asymmetric penalties for FP/FN — critical for fraud, credit
-risk, AML, chargebacks, and operational risk modeling.
+Financial loss functions and gradients used by the TimeCost Gradient Machine (TCGM).
+
+Contains:
+ - financial_loss: per-sample expected monetary loss (probabilistic)
+ - grad_financial: gradient dL/dp (w.r.t. predicted probability)
+ - grad_logit_safe: maps dL/dp -> dL/d(logit) (numerically stable)
 """
 
+from typing import Union, Sequence
 import numpy as np
-# -------------------------------------------------------------------------
-# 1) FINANCIAL LOSS FUNCTION
-# -------------------------------------------------------------------------
-def financial_loss(y_true, y_prob, cost_fp=1.0, cost_fn=5.0):
+
+ArrayLike = Union[np.ndarray, Sequence]
+
+
+def financial_loss(y_true: ArrayLike, y_prob: ArrayLike, cost_fp: float = 1.0, cost_fn: float = 5.0) -> np.ndarray:
     """
-    Per-sample asymmetric financial loss.
+    Probabilistic expected loss per sample:
+        L = cost_fp * (1 - y) * p + cost_fn * y * (1 - p)
 
-    y_true : {0,1}
-    y_prob : predicted probability of y=1
+    Parameters
+    ----------
+    y_true : array-like (0/1)
+    y_prob : array-like floats [0,1]
+    cost_fp : float
+    cost_fn : float
 
-    cost_fp: cost when model predicts fraud but it's legitimate
-    cost_fn: cost when model misses actual fraud
-
-    Loss is continuous in probability space:
-      L = cost_fp * (1-y) * p + cost_fn * y * (1-p)
+    Returns
+    -------
+    numpy.ndarray : per-sample loss (float)
     """
     y_true = np.asarray(y_true).astype(float)
-    y_prob = np.clip(np.asarray(y_prob).astype(float), 1e-6, 1 - 1e-6)
-
-    fp_component = cost_fp * (1 - y_true) * y_prob
-    fn_component = cost_fn * y_true * (1 - y_prob)
-
+    y_prob = np.clip(np.asarray(y_prob).astype(float), 0.0, 1.0)
+    fp_component = cost_fp * (1.0 - y_true) * y_prob
+    fn_component = cost_fn * y_true * (1.0 - y_prob)
     return fp_component + fn_component
 
 
-# -------------------------------------------------------------------------
-# 2) GRADIENT OF FINANCIAL LOSS (w.r.t probability)
-# -------------------------------------------------------------------------
-def grad_financial(y_true, y_prob, cost_fp=1.0, cost_fn=5.0):
+def grad_financial(y_true: ArrayLike, y_prob: ArrayLike, cost_fp: float = 1.0, cost_fn: float = 5.0) -> np.ndarray:
     """
-    Gradient dL/dp for the asymmetric financial loss.
-    TCGM uses this inside the boosting loop.
-
+    Gradient of the probabilistic loss with respect to probability p:
         dL/dp = cost_fp * (1 - y) - cost_fn * y
 
-    For fraud (y=1), gradient pushes probability upward.
-    For good behavior (y=0), gradient pushes downward.
+    This is constant per class (w.r.t. p) because the chosen surrogate is linear in p.
     """
     y_true = np.asarray(y_true).astype(float)
-    return cost_fp * (1 - y_true) - cost_fn * y_true
+    return cost_fp * (1.0 - y_true) - cost_fn * y_true
 
 
-# -------------------------------------------------------------------------
-# 3) LOGIT-SAFE GRADIENT (optional)
-# -------------------------------------------------------------------------
-def grad_logit_safe(y_true, y_prob, cost_fp=1.0, cost_fn=5.0):
+def grad_logit_safe(y_true: ArrayLike, y_prob: ArrayLike, cost_fp: float = 1.0, cost_fn: float = 5.0) -> np.ndarray:
     """
-    Converts dL/dp → dL/d(logit).
-    Safe for extreme probabilities (0 or 1).
-
-    Used only if the model needs defensive stability.
+    Convert gradient dL/dp into dL/d(logit) using dp/dlogit = p*(1-p).
+    Safer when operating in logit space (our boosting loop).
     """
-    grad_p = grad_financial(y_true, y_prob, cost_fp, cost_fn)
-    p = np.clip(y_prob, 1e-6, 1 - 1e-6)
-    return grad_p * (p * (1 - p))
+    grad_p = grad_financial(y_true, y_prob, cost_fp=cost_fp, cost_fn=cost_fn)
+    p = np.clip(np.asarray(y_prob).astype(float), 1e-12, 1.0 - 1e-12)
+    return grad_p * (p * (1.0 - p))
