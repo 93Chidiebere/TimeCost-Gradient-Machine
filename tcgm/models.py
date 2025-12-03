@@ -105,26 +105,86 @@ class TimeCostGradientMachine(BaseEstimator, ClassifierMixin):
     # helper: prepare X (DataFrame -> numeric matrix) and store feature names
     # -------------------------
     def _prepare_X(self, X: Any) -> np.ndarray:
+        """
+        Convert input to numpy array and handle feature validation.
+        
+        During training: stores feature schema
+        During prediction: validates and aligns features
+        """
+        # -------------------------
+        # If input is a DataFrame
+        # -------------------------
         if isinstance(X, pd.DataFrame):
             df = X.copy()
+
+            # Drop time column if configured
             if self.time_col and self.time_col in df.columns:
                 df = df.drop(columns=[self.time_col])
+
+            # Select numeric columns (FIXED: added .copy())
             numeric_df = df.select_dtypes(include=[np.number]).copy()
+
+            # Attempt conversion if none are numeric
             if numeric_df.shape[1] == 0:
-                converted = df.apply(pd.to_numeric, errors="coerce")
-                numeric_df = converted.select_dtypes(include=[np.number])
+                df_numeric = df.apply(pd.to_numeric, errors="coerce")
+                numeric_df = df_numeric.select_dtypes(include=[np.number]).copy()
                 if numeric_df.shape[1] == 0:
-                    raise ValueError("No numeric features found after dropping time column.")
-            self.feature_columns_ = list(numeric_df.columns)
+                    raise ValueError("No numeric features found after processing.")
+
+            # -------------------------------------
+            # TRAINING mode — store feature schema
+            # -------------------------------------
+            if self.feature_columns_ is None:
+                self.feature_columns_ = list(numeric_df.columns)
+
+            # -------------------------------------
+            # PREDICTION mode — validate schema
+            # -------------------------------------
+            else:
+                # Missing columns
+                missing = set(self.feature_columns_) - set(numeric_df.columns)
+                if missing:
+                    raise ValueError(
+                        f"Missing features during prediction: {missing}\n"
+                        f"Expected features: {self.feature_columns_}"
+                    )
+
+                # Extra columns (warning only)
+                extra = set(numeric_df.columns) - set(self.feature_columns_)
+                if extra:
+                    import warnings
+                    warnings.warn(f"Extra features will be ignored: {extra}")
+
+                # Reorder to match training
+                numeric_df = numeric_df[self.feature_columns_]
+
             return numeric_df.to_numpy(dtype=float, copy=False)
+
+        # -----------------------------------------
+        # If input is a NumPy array
+        # -----------------------------------------
         elif isinstance(X, np.ndarray):
             arr = np.asarray(X)
+
+            # reshape 1D arrays
             if arr.ndim == 1:
                 arr = arr.reshape(-1, 1)
+
+            # Validate number of features
+            if self.feature_columns_ is not None:
+                expected = len(self.feature_columns_)
+                if arr.shape[1] != expected:
+                    raise ValueError(
+                        f"X has {arr.shape[1]} features, but model expects {expected}."
+                    )
+
             return arr.astype(float)
+
+        # -----------------------------------------
+        # If list-like → convert to DataFrame
+        # -----------------------------------------
         else:
-            df = pd.DataFrame(X)
-            return self._prepare_X(df)
+            return self._prepare_X(pd.DataFrame(X))
 
     # -------------------------
     # fit: main boosting loop
@@ -136,12 +196,22 @@ class TimeCostGradientMachine(BaseEstimator, ClassifierMixin):
         Parameters
         ----------
         X : DataFrame or array-like
+            Feature matrix
         y : array-like (0/1)
+            Binary target variable
         exposure : optional per-sample monetary exposure (float array)
+            Per-sample exposure amounts
         sample_weight : optional additional sample weights
+            Additional sample weights to apply
+        
+        Returns
+        -------
+        self : TimeCostGradientMachine
+            Fitted estimator
         """
         X_arr = self._prepare_X(X)
         y_arr = np.asarray(y).reshape(-1).astype(int)
+        
         if X_arr.shape[0] != y_arr.shape[0]:
             raise ValueError("X and y must have same number of rows")
 
@@ -154,13 +224,16 @@ class TimeCostGradientMachine(BaseEstimator, ClassifierMixin):
 
         # compute sample weights (exposure and optional weight)
         sw = np.ones(n, dtype=float)
+        
         if sample_weight is not None:
             sw = sw * np.asarray(sample_weight, dtype=float).reshape(-1)
+        
         if exposure is not None:
             exp = np.asarray(exposure, dtype=float).reshape(-1)
             # rescale exposures to avoid numerical issues
             exp_norm = exp / (np.mean(exp) + 1e-12)
             sw = sw * exp_norm
+        
         if self.recency_weighting:
             rec = np.power(self.recency_alpha, np.arange(n)[::-1])
             rec = rec / (np.mean(rec) + 1e-12)
@@ -170,30 +243,48 @@ class TimeCostGradientMachine(BaseEstimator, ClassifierMixin):
         self.loss_history_ = []
         self.lr_history_ = []
 
+        # Main boosting loop
         for t in range(self.n_estimators):
+            # Current probabilities
             prob = 1.0 / (1.0 + np.exp(-F))
-            # gradient wrt prob
+            
+            # Compute gradient with respect to probability
             grad_p = grad_financial(y_arr, prob, cost_fp=self.cost_fp, cost_fn=self.cost_fn)
-            # convert to pseudo-response (dL/dlogit)
+            
+            # Convert to pseudo-response (dL/dlogit)
             if self.use_logit_safe_grad:
                 pseudo = -grad_p * (prob * (1.0 - prob))
             else:
                 pseudo = -grad_p
 
-            tree = DecisionTreeRegressor(max_depth=self.max_depth, min_samples_leaf=self.min_samples_leaf, random_state=self.random_state + t)
+            # Fit tree to pseudo-residuals
+            tree = DecisionTreeRegressor(
+                max_depth=self.max_depth,
+                min_samples_leaf=self.min_samples_leaf,
+                random_state=self.random_state + t
+            )
+            
             try:
                 tree.fit(X_arr, pseudo, sample_weight=sw)
-            except Exception:
+            except TypeError:
+                # Fallback if sample_weight not supported
                 tree.fit(X_arr, pseudo)
+            
             self.base_models_.append(tree)
 
-            # update predictions (logit space)
+            # Update predictions in logit space
             F += self.learning_rate * tree.predict(X_arr)
 
-            # monitoring
+            # Monitor performance
             prob_now = 1.0 / (1.0 + np.exp(-F))
-            perf = evaluate_financial_performance(y_arr, prob_now, cost_fp=self.cost_fp, cost_fn=self.cost_fn)
+            perf = evaluate_financial_performance(
+                y_arr, prob_now, 
+                cost_fp=self.cost_fp, 
+                cost_fn=self.cost_fn
+            )
             self.loss_history_.append(perf["Expected_Loss"])
+            
+            # Adaptive learning rate (via TrainerEngine)
             lr = self.trainer_.record_loss(perf["Expected_Loss"])
             self.lr_history_.append(lr)
 
@@ -203,19 +294,50 @@ class TimeCostGradientMachine(BaseEstimator, ClassifierMixin):
     # predictions
     # -------------------------
     def _predict_logit(self, X: Any) -> np.ndarray:
+        """Predict log-odds (logits) for input X."""
         X_arr = self._prepare_X(X)
         logit = np.full(shape=(X_arr.shape[0],), fill_value=self.init_logit_, dtype=float)
+        
         for m in self.base_models_:
             logit += self.learning_rate * m.predict(X_arr)
+        
         return logit
 
     def predict_proba(self, X: Any) -> np.ndarray:
+        """
+        Predict class probabilities for X.
+        
+        Parameters
+        ----------
+        X : array-like or DataFrame
+            Input features
+        
+        Returns
+        -------
+        proba : ndarray of shape (n_samples, 2)
+            Class probabilities [P(y=0), P(y=1)]
+        """
         check_is_fitted(self, "base_models_")
         logits = self._predict_logit(X)
         probs = 1.0 / (1.0 + np.exp(-logits))
         return np.vstack([1.0 - probs, probs]).T
 
     def predict(self, X: Any, threshold: float = 0.5) -> np.ndarray:
+        """
+        Predict binary class labels for X.
+        
+        Parameters
+        ----------
+        X : array-like or DataFrame
+            Input features
+        threshold : float, default=0.5
+            Classification threshold
+        
+        Returns
+        -------
+        y_pred : ndarray of shape (n_samples,)
+            Predicted class labels (0 or 1)
+        """
         probs = self.predict_proba(X)[:, 1]
         return (probs >= threshold).astype(int)
 
@@ -223,20 +345,99 @@ class TimeCostGradientMachine(BaseEstimator, ClassifierMixin):
     # evaluation helpers
     # -------------------------
     def evaluate(self, X: Any, y: Any) -> Dict[str, float]:
+        """
+        Evaluate model performance with financial metrics.
+        
+        Parameters
+        ----------
+        X : array-like or DataFrame
+            Input features
+        y : array-like
+            True binary labels
+        
+        Returns
+        -------
+        metrics : dict
+            Dictionary of financial performance metrics
+        """
         probs = self.predict_proba(X)[:, 1]
-        return evaluate_financial_performance(y, probs, cost_fp=self.cost_fp, cost_fn=self.cost_fn)
+        return evaluate_financial_performance(
+            y, probs, 
+            cost_fp=self.cost_fp, 
+            cost_fn=self.cost_fn
+        )
 
-    def compute_expected_monetary_loss(self, X: Any, y: Any, exposure: Any, lgd: float = 0.6, cost_fp: float = 50.0, thresholds: Optional[Any] = None) -> Dict[str, Any]:
+    def compute_expected_monetary_loss(
+        self, 
+        X: Any, 
+        y: Any, 
+        exposure: Any, 
+        lgd: float = 0.6, 
+        cost_fp: float = 50.0, 
+        thresholds: Optional[Any] = None
+    ) -> Dict[str, Any]:
+        """
+        Compute expected monetary loss across different thresholds.
+        
+        Parameters
+        ----------
+        X : array-like or DataFrame
+            Input features
+        y : array-like
+            True binary labels
+        exposure : array-like
+            Per-sample exposure amounts
+        lgd : float, default=0.6
+            Loss given default rate
+        cost_fp : float, default=50.0
+            Cost of false positive
+        thresholds : array-like, optional
+            Thresholds to evaluate
+        
+        Returns
+        -------
+        results : dict
+            Dictionary containing loss metrics across thresholds
+        """
         probs = self.predict_proba(X)[:, 1]
-        return compute_expected_monetary_loss(y, probs, exposure, lgd=lgd, cost_fp=cost_fp, thresholds=thresholds)
+        return compute_expected_monetary_loss(
+            y, probs, exposure, 
+            lgd=lgd, 
+            cost_fp=cost_fp, 
+            thresholds=thresholds
+        )
 
     # -------------------------
     # persistence
     # -------------------------
     def save(self, path: str):
-        joblib.dump({"model": self, "feature_columns": self.feature_columns_}, path)
+        """
+        Save model to disk.
+        
+        Parameters
+        ----------
+        path : str
+            Path to save the model
+        """
+        joblib.dump({
+            "model": self, 
+            "feature_columns": self.feature_columns_
+        }, path)
 
     @classmethod
     def load(cls, path: str):
+        """
+        Load model from disk.
+        
+        Parameters
+        ----------
+        path : str
+            Path to the saved model
+        
+        Returns
+        -------
+        model : TimeCostGradientMachine
+            Loaded model instance
+        """
         loaded = joblib.load(path)
         return loaded["model"]
