@@ -37,8 +37,10 @@ A gradient model that minimizes **Expected Monetary Loss** (EML) instead of raw 
 A regression engine for forecasting financial magnitudes (fraud amount, loan loss, demand, revenue, cashflow).
 
 Uses Asymmetric MAE:
-~~~ bash
-L=cover​[y^​−y]+​+cunder​[y−y^​]+​
+~~~ java
+∂L/∂ŷ = c_over  if ŷ > y
+       -c_under if ŷ < y
+pseudo = -∂L/∂ŷ
 ~~~
 
 Handles:
