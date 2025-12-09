@@ -40,7 +40,7 @@ TCGM integrates:
 Install in editable mode during development:
 
 ```bash
-pip install tcgm==0.1.3
+pip install tcgm==0.1.4
 ```
 
 Or install in your virtual environment
