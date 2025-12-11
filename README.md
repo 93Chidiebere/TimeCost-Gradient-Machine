@@ -73,14 +73,9 @@ recency weighting
 
 tail quantile penalties
 
-<<<<<<< HEAD
 ```bash
 pip install tcgm==0.1.4
 ```
-=======
-5. **Enhanced Metrics Suite (Classification + Regression)**
-**Classifier Metrics**
->>>>>>> 6941656e44b235d2096c0744e79340cb07d6fafc
 
 Expected Monetary Loss (EML)
 
@@ -198,6 +193,11 @@ model.fit(X_train, y_train)
 
 probs = model.predict_proba(X_test)[:, 1]
 
+~~~
+
+
+Metric:
+~~~python
 from tcgm.metrics import compute_expected_monetary_loss
 
 eml = compute_expected_monetary_loss(
@@ -252,13 +252,13 @@ They require ensemble tricks (bagging, boosting, stacking) to approximate risk b
 
 . financial penalty logic integrated in loss
 
-**TCGM** = ML that understands money the way banks and insurers do.
+**TCGM** = algorithm that understands money the way banks and insurers do.
 
-## 🌍 Designed for African & Emerging Market Systems
+## 🌍 Designed for African banks & Emerging Market Systems
 
 **TCGM** was developed to solve real operational challenges in:
 
-. Nigerian banking
+. banking
 
 . mobile payments
 
