@@ -1,8 +1,8 @@
 README.md
-setup.py
+pyproject.toml
+setup.cfg
 tcgm/__init__.py
 tcgm/core.py
-tcgm/cost.py
 tcgm/encoders.py
 tcgm/loss.py
 tcgm/metrics.py
