@@ -22,59 +22,30 @@ Unlike general-purpose ML algorithms, TCGM does not rely on bagging, boosting, o
 the financial logic is built into the gradients themselves.
 
 ## 🚀 Key Features
+
 1. **TCGMClassifier**: Cost-Sensitive Financial Classification
-
-A gradient model that minimizes **Expected Monetary Loss** (EML) instead of raw classification error.
-
-✔ Cost-sensitive FP/FN
-✔ Time-aware gradients
-✔ Tail-risk focus
-✔ Regulator-penalty integration
-✔ Leakage-safe temporal encoding
+Minimizes **Expected Monetary Loss** (EML) instead of raw classification error.
+* **Objectives**: Supports `"linear"` (original non-convex) and `"convex"` (advanced cost-sensitive log-loss that prevents gradient vanishing on extreme errors).
+* **Robust Gradients**: Evaluates regulator-penalty integration, False Positives (investigation costs), and False Negatives (fraud losses).
+* **Leakage-safe**: Built-in leakage-safe temporal target encoding.
 
 2. **TCGMRegressor**: Asymmetric Financial Regression
+Fits predictions to custom over/under-estimation costs.
+* **Objectives**: Supports `"mae"` (asymmetric absolute error for median quantile estimation) and `"mse"` (new asymmetric mean squared error with continuous gradients scaling directly with error magnitude).
+* **Asymmetric Risk**: Prevents underestimation risk (credit losses) or overestimation risk (inventory/storage costs).
 
-A regression engine for forecasting financial magnitudes (fraud amount, loan loss, demand, revenue, cashflow).
+3. **TCGMForecaster**: Time-Series Forecasting
+A specialized wrapper module (`tcgm.ts`) designed for recursive multi-step forecasting under asymmetric business costs. Automates the generation of lag features and rolling windows with strict leakage prevention.
 
-Uses Asymmetric MAE:
-~~~ java
-∂L/∂ŷ = c_over  if ŷ > y
-       -c_under if ŷ < y
-pseudo = -∂L/∂ŷ
-~~~
-
-Handles:
-
-. Underestimation risk (credit loss, liquidity)
-
-. Overestimation risk (inventory, cash forecasting)
-
-. Heavy-tailed distributions common in finance
-
-. Time-dependent weights & exposure scaling
-
-
-3. **Time-Aware Gradient Flow**
-
-Financial outcomes drift over time.
-TCGM applies chronological penalties + temporal learning rates to fit data in motion.
-
-4. **Asymmetric & Tail-Risk Optimization**
-
-Most losses in finance occur in the tails, not the average.
-
-TCGM integrates:
-
-asymmetric costs
-
-exposure-weighted errors
-
-recency weighting
-
-tail quantile penalties
+4. **True Time-Aware Gradient Flow**
+Re-engineered recency weighting decay:
+\[
+w_i = \exp(-\lambda \cdot (t_{\text{max}} - t_i))
+\]
+Decays weights chronologically based on physical time differences from the latest transaction, rather than simple row indices (fixing the sorting bug).
 
 ```bash
-pip install tcgm==0.1.4
+pip install tcgm==0.1.5
 ```
 
 Expected Monetary Loss (EML)
@@ -108,7 +79,7 @@ These metrics reflect real financial risk, not abstract statistical error.
 ## 📦 Installation
 
 ~~~bash
-pip install tcgm==0.1.4
+pip install tcgm==0.1.5
 ~~~
 
 Or development mode:

@@ -463,7 +463,7 @@ from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
 from sklearn.utils.validation import check_is_fitted
 import joblib
 
-from .loss import grad_financial, grad_logit_safe, grad_asymmetric_mae
+from .loss import grad_financial, grad_logit_safe, grad_asymmetric_mae, grad_convex_cs_logloss, grad_asymmetric_mse
 from .metrics import evaluate_financial_performance, evaluate_regression_cost, compute_expected_monetary_loss
 from .core import TrainerEngine
 
@@ -526,6 +526,8 @@ class TCGMClassifier(BaseEstimator, ClassifierMixin):
         time_col: Optional[str] = None,
         recency_weighting: bool = False,
         recency_alpha: float = 0.9,
+        recency_lambda: float = 0.05,
+        objective: str = "linear",
         base_lr: float = 0.05,
         use_logit_safe_grad: bool = True,
         random_state: int = 42,
@@ -539,6 +541,8 @@ class TCGMClassifier(BaseEstimator, ClassifierMixin):
         self.time_col = time_col
         self.recency_weighting = bool(recency_weighting)
         self.recency_alpha = float(recency_alpha)
+        self.recency_lambda = float(recency_lambda)
+        self.objective = str(objective)
         self.base_lr = float(base_lr)
         self.use_logit_safe_grad = bool(use_logit_safe_grad)
         self.random_state = int(random_state)
@@ -583,9 +587,18 @@ class TCGMClassifier(BaseEstimator, ClassifierMixin):
             exp_norm = exp / (np.mean(exp) + 1e-12)
             sw = sw * exp_norm
         if self.recency_weighting:
-            rec = np.power(self.recency_alpha, np.arange(n)[::-1])
-            rec = rec / (np.mean(rec) + 1e-12)
-            sw = sw * rec
+            if self.time_col and isinstance(X, pd.DataFrame) and self.time_col in X.columns:
+                times = pd.to_datetime(X[self.time_col])
+                delta_t = (times.max() - times).dt.total_seconds() / (24 * 3600)
+                rec = np.exp(-self.recency_lambda * delta_t.values)
+                rec = rec / (np.mean(rec) + 1e-12)
+                sw = sw * rec
+            else:
+                import warnings
+                warnings.warn("recency_weighting is True but time_col was not found in input DataFrame or input is not a DataFrame. Falling back to index-based decay.")
+                rec = np.power(self.recency_alpha, np.arange(n)[::-1])
+                rec = rec / (np.mean(rec) + 1e-12)
+                sw = sw * rec
 
         self.base_models_ = []
         self.loss_history_ = []
@@ -593,14 +606,93 @@ class TCGMClassifier(BaseEstimator, ClassifierMixin):
 
         for t in range(self.n_estimators):
             prob = 1.0 / (1.0 + np.exp(-F))
-            # gradient wrt probability
-            grad_p = grad_financial(y_arr, prob, cost_fp=self.cost_fp, cost_fn=self.cost_fn)
-            if self.use_logit_safe_grad:
-                pseudo = -grad_p * (prob * (1.0 - prob))
+            
+            if self.objective == "convex":
+                grad_logit = grad_convex_cs_logloss(y_arr, prob, cost_fp=self.cost_fp, cost_fn=self.cost_fn)
+                pseudo = -grad_logit
             else:
-                pseudo = -grad_p
+                grad_p = grad_financial(y_arr, prob, cost_fp=self.cost_fp, cost_fn=self.cost_fn)
+                if self.use_logit_safe_grad:
+                    pseudo = -grad_p * (prob * (1.0 - prob))
+                else:
+                    pseudo = -grad_p
 
             tree = DecisionTreeRegressor(max_depth=self.max_depth, min_samples_leaf=self.min_samples_leaf, random_state=self.random_state + t)
+            try:
+                tree.fit(X_arr, pseudo, sample_weight=sw)
+            except TypeError:
+                tree.fit(X_arr, pseudo)
+            self.base_models_.append(tree)
+            F += self.learning_rate * tree.predict(X_arr)
+
+            prob_now = 1.0 / (1.0 + np.exp(-F))
+            perf = evaluate_financial_performance(y_arr, prob_now, cost_fp=self.cost_fp, cost_fn=self.cost_fn)
+            self.loss_history_.append(perf["Expected_Loss"])
+            lr = self.trainer_.record_loss(perf["Expected_Loss"])
+            self.lr_history_.append(lr)
+
+        return self
+
+    def partial_fit(self, X: Any, y: Any, exposure: Optional[Any] = None, sample_weight: Optional[Any] = None):
+        """
+        Incremental fit (warm-start) of TCGMClassifier.
+        Appends new boosting trees to the ensemble.
+        """
+        X_arr = self._prepare_X(X)
+        y_arr = np.asarray(y).reshape(-1).astype(int)
+        if X_arr.shape[0] != y_arr.shape[0]:
+            raise ValueError("X and y must have same number of rows.")
+        n = X_arr.shape[0]
+
+        sw = np.ones(n, dtype=float)
+        if sample_weight is not None:
+            sw = sw * np.asarray(sample_weight, dtype=float).reshape(-1)
+        if exposure is not None:
+            exp = np.asarray(exposure, dtype=float).reshape(-1)
+            exp_norm = exp / (np.mean(exp) + 1e-12)
+            sw = sw * exp_norm
+        if self.recency_weighting:
+            if self.time_col and isinstance(X, pd.DataFrame) and self.time_col in X.columns:
+                times = pd.to_datetime(X[self.time_col])
+                delta_t = (times.max() - times).dt.total_seconds() / (24 * 3600)
+                rec = np.exp(-self.recency_lambda * delta_t.values)
+                rec = rec / (np.mean(rec) + 1e-12)
+                sw = sw * rec
+            else:
+                import warnings
+                warnings.warn("recency_weighting is True but time_col was not found in input DataFrame or input is not a DataFrame. Falling back to index-based decay.")
+                rec = np.power(self.recency_alpha, np.arange(n)[::-1])
+                rec = rec / (np.mean(rec) + 1e-12)
+                sw = sw * rec
+
+        if not hasattr(self, "base_models_") or len(self.base_models_) == 0:
+            p0 = np.clip(np.mean(y_arr), 1e-6, 1 - 1e-6)
+            self.init_logit_ = float(np.log(p0 / (1.0 - p0)))
+            F = np.full(shape=y_arr.shape, fill_value=self.init_logit_, dtype=float)
+            self.base_models_ = []
+            self.loss_history_ = []
+            self.lr_history_ = []
+        else:
+            F = self._predict_logit(X)
+
+        for t in range(self.n_estimators):
+            prob = 1.0 / (1.0 + np.exp(-F))
+            
+            if self.objective == "convex":
+                grad_logit = grad_convex_cs_logloss(y_arr, prob, cost_fp=self.cost_fp, cost_fn=self.cost_fn)
+                pseudo = -grad_logit
+            else:
+                grad_p = grad_financial(y_arr, prob, cost_fp=self.cost_fp, cost_fn=self.cost_fn)
+                if self.use_logit_safe_grad:
+                    pseudo = -grad_p * (prob * (1.0 - prob))
+                else:
+                    pseudo = -grad_p
+
+            tree = DecisionTreeRegressor(
+                max_depth=self.max_depth,
+                min_samples_leaf=self.min_samples_leaf,
+                random_state=self.random_state + len(self.base_models_)
+            )
             try:
                 tree.fit(X_arr, pseudo, sample_weight=sw)
             except TypeError:
@@ -622,6 +714,7 @@ class TCGMClassifier(BaseEstimator, ClassifierMixin):
         for m in self.base_models_:
             logit += self.learning_rate * m.predict(X_arr)
         return logit
+
 
     def predict_proba(self, X: Any):
         check_is_fitted(self, "base_models_")
@@ -672,6 +765,8 @@ class TCGMRegressor(BaseEstimator, RegressorMixin):
         time_col: Optional[str] = None,
         recency_weighting: bool = False,
         recency_alpha: float = 0.9,
+        recency_lambda: float = 0.05,
+        objective: str = "mae",
         random_state: int = 42,
     ):
         self.n_estimators = int(n_estimators)
@@ -683,6 +778,8 @@ class TCGMRegressor(BaseEstimator, RegressorMixin):
         self.time_col = time_col
         self.recency_weighting = bool(recency_weighting)
         self.recency_alpha = float(recency_alpha)
+        self.recency_lambda = float(recency_lambda)
+        self.objective = str(objective)
         self.random_state = int(random_state)
 
         self.base_models_: List[DecisionTreeRegressor] = []
@@ -714,18 +811,29 @@ class TCGMRegressor(BaseEstimator, RegressorMixin):
         if sample_weight is not None:
             sw = sw * np.asarray(sample_weight, dtype=float).reshape(-1)
         if self.recency_weighting:
-            rec = np.power(self.recency_alpha, np.arange(n)[::-1])
-            rec = rec / (np.mean(rec) + 1e-12)
-            sw = sw * rec
+            if self.time_col and isinstance(X, pd.DataFrame) and self.time_col in X.columns:
+                times = pd.to_datetime(X[self.time_col])
+                delta_t = (times.max() - times).dt.total_seconds() / (24 * 3600)
+                rec = np.exp(-self.recency_lambda * delta_t.values)
+                rec = rec / (np.mean(rec) + 1e-12)
+                sw = sw * rec
+            else:
+                import warnings
+                warnings.warn("recency_weighting is True but time_col was not found in input DataFrame or input is not a DataFrame. Falling back to index-based decay.")
+                rec = np.power(self.recency_alpha, np.arange(n)[::-1])
+                rec = rec / (np.mean(rec) + 1e-12)
+                sw = sw * rec
 
         self.base_models_ = []
 
         for t in range(self.n_estimators):
             # current predictions
             pred = F.copy()
-            # gradient dL/dŷ (piecewise)
-            grad = grad_asymmetric_mae(y_arr, pred, c_over=self.c_over, c_under=self.c_under)
-            # pseudo-response = -gradient
+            
+            if self.objective == "mse":
+                grad = grad_asymmetric_mse(y_arr, pred, c_over=self.c_over, c_under=self.c_under)
+            else:
+                grad = grad_asymmetric_mae(y_arr, pred, c_over=self.c_over, c_under=self.c_under)
             pseudo = -grad
 
             tree = DecisionTreeRegressor(max_depth=self.max_depth, min_samples_leaf=self.min_samples_leaf, random_state=self.random_state + t)
@@ -737,6 +845,64 @@ class TCGMRegressor(BaseEstimator, RegressorMixin):
             F += self.learning_rate * tree.predict(X_arr)
 
         return self
+
+    def partial_fit(self, X: Any, y: Any, sample_weight: Optional[Any] = None):
+        """
+        Incremental fit (warm-start) of TCGMRegressor.
+        Appends new boosting trees to the ensemble.
+        """
+        X_arr = self._prepare_X(X)
+        y_arr = np.asarray(y).reshape(-1).astype(float)
+        if X_arr.shape[0] != y_arr.shape[0]:
+            raise ValueError("X and y must have same number of rows.")
+        n = X_arr.shape[0]
+
+        sw = np.ones(n, dtype=float)
+        if sample_weight is not None:
+            sw = sw * np.asarray(sample_weight, dtype=float).reshape(-1)
+        if self.recency_weighting:
+            if self.time_col and isinstance(X, pd.DataFrame) and self.time_col in X.columns:
+                times = pd.to_datetime(X[self.time_col])
+                delta_t = (times.max() - times).dt.total_seconds() / (24 * 3600)
+                rec = np.exp(-self.recency_lambda * delta_t.values)
+                rec = rec / (np.mean(rec) + 1e-12)
+                sw = sw * rec
+            else:
+                import warnings
+                warnings.warn("recency_weighting is True but time_col was not found in input DataFrame or input is not a DataFrame. Falling back to index-based decay.")
+                rec = np.power(self.recency_alpha, np.arange(n)[::-1])
+                rec = rec / (np.mean(rec) + 1e-12)
+                sw = sw * rec
+
+        if not hasattr(self, "base_models_") or len(self.base_models_) == 0:
+            self.init_pred_ = float(np.mean(y_arr))
+            F = np.full(shape=y_arr.shape, fill_value=self.init_pred_, dtype=float)
+            self.base_models_ = []
+        else:
+            F = self.predict(X)
+
+        for t in range(self.n_estimators):
+            pred = F.copy()
+            if self.objective == "mse":
+                grad = grad_asymmetric_mse(y_arr, pred, c_over=self.c_over, c_under=self.c_under)
+            else:
+                grad = grad_asymmetric_mae(y_arr, pred, c_over=self.c_over, c_under=self.c_under)
+            pseudo = -grad
+
+            tree = DecisionTreeRegressor(
+                max_depth=self.max_depth,
+                min_samples_leaf=self.min_samples_leaf,
+                random_state=self.random_state + len(self.base_models_)
+            )
+            try:
+                tree.fit(X_arr, pseudo, sample_weight=sw)
+            except TypeError:
+                tree.fit(X_arr, pseudo)
+            self.base_models_.append(tree)
+            F += self.learning_rate * tree.predict(X_arr)
+
+        return self
+
 
     def predict(self, X: Any):
         check_is_fitted(self, "base_models_")

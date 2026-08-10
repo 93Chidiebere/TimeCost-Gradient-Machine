@@ -21,15 +21,20 @@
 # tcgm/__init__.py
 """
 Public API for TimeCost Gradient Machine (TCGM).
-Expose classifier + regressor, loss helpers and metrics.
+Expose classifier + regressor + forecaster, loss helpers and metrics.
 """
 from .models import TCGMClassifier, TCGMRegressor
+from .ts import TCGMForecaster
 from .loss import (
     financial_loss,
     grad_financial,
     grad_logit_safe,
     asymmetric_mae_loss,
-    grad_asymmetric_mae
+    grad_asymmetric_mae,
+    convex_cs_logloss,
+    grad_convex_cs_logloss,
+    asymmetric_mse_loss,
+    grad_asymmetric_mse
 )
 from .metrics import (
     evaluate_financial_performance,
@@ -40,14 +45,19 @@ from .metrics import (
 __all__ = [
     "TCGMClassifier",
     "TCGMRegressor",
+    "TCGMForecaster",
     "financial_loss",
     "grad_financial",
     "grad_logit_safe",
     "asymmetric_mae_loss",
     "grad_asymmetric_mae",
+    "convex_cs_logloss",
+    "grad_convex_cs_logloss",
+    "asymmetric_mse_loss",
+    "grad_asymmetric_mse",
     "evaluate_financial_performance",
     "compute_expected_monetary_loss",
     "evaluate_regression_cost",
 ]
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"

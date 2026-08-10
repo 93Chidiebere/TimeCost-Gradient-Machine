@@ -137,3 +137,49 @@ def grad_asymmetric_mae(y_true: ArrayLike, y_pred: ArrayLike, c_over: float = 1.
     grad[yhat < y] = -float(c_under)
     # equal stays 0
     return grad
+
+
+def convex_cs_logloss(y_true: ArrayLike, y_prob: ArrayLike, cost_fp: float = 1.0, cost_fn: float = 5.0) -> np.ndarray:
+    """
+    Convex cost-sensitive log-loss (cross-entropy formulation):
+      L = - [cost_fn * y * log(p) + cost_fp * (1 - y) * log(1 - p)]
+    """
+    y = np.asarray(y_true).astype(float)
+    p = np.clip(np.asarray(y_prob).astype(float), 1e-12, 1.0 - 1e-12)
+    return - (cost_fn * y * np.log(p) + cost_fp * (1.0 - y) * np.log(1.0 - p))
+
+
+def grad_convex_cs_logloss(y_true: ArrayLike, y_prob: ArrayLike, cost_fp: float = 1.0, cost_fn: float = 5.0) -> np.ndarray:
+    """
+    Gradient dL/dlogit for the convex cost-sensitive log-loss:
+      dL/dlogit = cost_fp * (1 - y) * p - cost_fn * y * (1 - p)
+    This gradient scales with prediction error and avoids vanishing gradient.
+    """
+    y = np.asarray(y_true).astype(float)
+    p = np.clip(np.asarray(y_prob).astype(float), 1e-12, 1.0 - 1e-12)
+    return cost_fp * (1.0 - y) * p - cost_fn * y * (1.0 - p)
+
+
+# -------------------------
+# Regression asymmetric MSE
+# -------------------------
+def asymmetric_mse_loss(y_true: ArrayLike, y_pred: ArrayLike, c_over: float = 1.0, c_under: float = 1.0) -> np.ndarray:
+    """
+    Asymmetric Mean Squared Error loss:
+      L = c_over * (y_pred - y)^2 if y_pred > y else c_under * (y_pred - y)^2
+    """
+    y = np.asarray(y_true).astype(float)
+    yhat = np.asarray(y_pred).astype(float)
+    diff = yhat - y
+    return np.where(diff > 0, c_over * (diff ** 2), c_under * (diff ** 2))
+
+
+def grad_asymmetric_mse(y_true: ArrayLike, y_pred: ArrayLike, c_over: float = 1.0, c_under: float = 1.0) -> np.ndarray:
+    """
+    Gradient dL/dyhat of Asymmetric MSE:
+      dL/dyhat = 2 * c_over * (y_pred - y) if y_pred > y else 2 * c_under * (y_pred - y)
+    """
+    y = np.asarray(y_true).astype(float)
+    yhat = np.asarray(y_pred).astype(float)
+    diff = yhat - y
+    return np.where(diff > 0, 2.0 * c_over * diff, 2.0 * c_under * diff)

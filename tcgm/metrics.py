@@ -236,7 +236,7 @@ Provides:
 from typing import Sequence, Optional, Dict, Any
 import numpy as np
 from sklearn.metrics import roc_auc_score, brier_score_loss
-from .loss import financial_loss, asymmetric_mae_loss
+from .loss import financial_loss, asymmetric_mae_loss, asymmetric_mse_loss
 
 ArrayLike = Sequence
 
@@ -316,13 +316,14 @@ def compute_expected_monetary_loss(
 # -------------------------
 def evaluate_regression_cost(y_true: ArrayLike, y_pred: ArrayLike, c_over: float = 1.0, c_under: float = 1.0) -> Dict[str, float]:
     """
-    Compute asymmetric MAE (mean of asymmetric_mae_loss) and standard RMSE for context.
+    Compute asymmetric MAE, asymmetric MSE, and standard MAE/RMSE.
     Returns:
-      {"Asymmetric_MAE": ..., "MAE": ..., "RMSE": ...}
+      {"Asymmetric_MAE": ..., "Asymmetric_MSE": ..., "MAE": ..., "RMSE": ...}
     """
     y = np.asarray(y_true).astype(float)
     yhat = np.asarray(y_pred).astype(float)
-    asym = float(np.mean(asymmetric_mae_loss(y, yhat, c_over=c_over, c_under=c_under)))
+    asym_mae = float(np.mean(asymmetric_mae_loss(y, yhat, c_over=c_over, c_under=c_under)))
+    asym_mse = float(np.mean(asymmetric_mse_loss(y, yhat, c_over=c_over, c_under=c_under)))
     mae = float(np.mean(np.abs(y - yhat)))
     rmse = float(np.sqrt(np.mean((y - yhat) ** 2)))
-    return {"Asymmetric_MAE": asym, "MAE": mae, "RMSE": rmse}
+    return {"Asymmetric_MAE": asym_mae, "Asymmetric_MSE": asym_mse, "MAE": mae, "RMSE": rmse}
