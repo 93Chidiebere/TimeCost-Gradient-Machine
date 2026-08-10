@@ -1,4 +1,4 @@
-# 🕒💰 TimeCost Gradient Machine (TCGM)
+# TimeCost Gradient Machine (TCGM)
 
 **TCGM** is a domain-specific gradient-learning framework built for financial prediction and decision optimization, where time, money, asymmetry, and tail-risk are more important than abstract statistical accuracy.
 
@@ -11,7 +11,7 @@ Unlike general-purpose ML libraries, TCGM embeds financial logic directly into t
 
 ---
 
-## 🚀 Core Components
+## Core Components
 
 ### 1. `TCGMClassifier` (Cost-Sensitive Classification)
 Traditional classifiers optimize for log-loss or entropy, treating False Positives (FP) and False Negatives (FN) symmetrically. `TCGMClassifier` optimizes the Expected Monetary Loss (EML) directly during boosting.
@@ -39,7 +39,7 @@ where $t_{\text{max}}$ is the latest timestamp in the dataset, and $\lambda$ is 
 
 ---
 
-## 📦 Installation
+## Installation
 
 Install the stable release via PyPI:
 ```bash
@@ -55,7 +55,7 @@ pip install -e .
 
 ---
 
-## 🧠 Quick Start Guide
+## Quick Start Guide
 
 ### 1. Cost-Sensitive Classification (`TCGMClassifier`)
 Optimizing classification thresholds and boosting steps for investigation cost vs. fraud loss.
@@ -162,7 +162,7 @@ print("Total trees in ensemble:", len(model.base_models_)) # Output: 20
 
 ---
 
-## 🧩 Comparison with Standard GBDTs (XGBoost, LightGBM)
+## Comparison with Standard GBDTs (XGBoost, LightGBM)
 Standard GBDTs target symmetric statistical metrics (e.g. log-loss or mean squared error). While sample weighting can help, it is decoupled from decision thresholding and temporal distances. TCGM bridges this gap by combining:
 1. **Explicit Business Alignment**: Loss gradients and tree splits are driven directly by operational costs ($c_{fp}$, $c_{fn}$, $c_{over}$, $c_{under}$).
 2. **Built-in Auto-thresholding**: Sweeps Expected Monetary Loss curves to automatically select the optimal classification threshold.
