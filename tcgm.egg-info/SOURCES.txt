@@ -7,6 +7,7 @@ tcgm/encoders.py
 tcgm/loss.py
 tcgm/metrics.py
 tcgm/models.py
+tcgm/ts.py
 tcgm/utils.py
 tcgm.egg-info/PKG-INFO
 tcgm.egg-info/SOURCES.txt
